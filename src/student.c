@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <string.h>
+
 #include "os-sim.h"
 
 #pragma GCC diagnostic push
@@ -41,7 +43,7 @@ static pthread_mutex_t current_mutex;
 // static variables I added
 
 static int algo;            // 1 = FIFO, 2 = RR, 3 = SRTF
-// static int rr_time_slice;
+static int rr_time_slice;
 
 static pcb_t *ready;
 static pthread_mutex_t ready_mutex;
@@ -70,7 +72,7 @@ pthread_cond_t ready_added;
  */
 static void schedule(unsigned int cpu_id)
 {
-    printf("+++ +++ schedule in\n");
+    // printf("+++ +++ schedule in\n");
     // Select and remove a runnable process, and set the process state to RUNNING
     pcb_t *candidate = NULL;
 
@@ -79,8 +81,8 @@ static void schedule(unsigned int cpu_id)
         candidate = ready;
         candidate -> state = PROCESS_RUNNING;
         ready = ready -> next;
-        printf("+++ %s is scheduled to run on CPU %d\n", candidate -> name, cpu_id);
-        printf("+++ head moved to %ld\n", (long) ready);
+        // printf("+++ %s is scheduled to run on CPU %d\n", candidate -> name, cpu_id);
+        // printf("+++ head moved to %ld\n", (long) ready);
         candidate -> next = NULL;
     }
     pthread_mutex_unlock(&ready_mutex);
@@ -91,8 +93,11 @@ static void schedule(unsigned int cpu_id)
     pthread_mutex_unlock(&current_mutex);
 
     // Call context_switch()
-    context_switch(cpu_id, candidate, -1);    // !!! time will depend on mode
-    printf("+++ +++ schedule out\n");
+    if ((algo == 2) && (candidate != NULL)) {
+        context_switch(cpu_id, candidate, rr_time_slice);
+    } else {
+        context_switch(cpu_id, candidate, -1);
+    }
 }
 
 
@@ -115,17 +120,16 @@ extern void idle(unsigned int cpu_id)
      * you implement a proper idle() function using a condition variable,
      * remove the call to mt_safe_usleep() below.
      */
-    printf("+++ +++ idle in\n");
+    // printf("+++ +++ idle in\n");
 
     pthread_mutex_lock(&ready_mutex);
     if (ready == NULL) {
-        printf("+++ idle waiting for ready_added signal\n");
+        // printf("+++ idle waiting for ready_added signal\n");
         pthread_cond_wait(&ready_added, &ready_mutex);
-        printf("+++ idle got ready_added signal\n");
+        // printf("+++ idle got ready_added signal\n");
     }
     pthread_mutex_unlock(&ready_mutex);
     schedule(cpu_id);
-    printf("+++ +++ idle out\n");
 }
 
 
@@ -140,7 +144,7 @@ extern void idle(unsigned int cpu_id)
  */
 extern void preempt(unsigned int cpu_id)
 {
-    printf("+++ +++ preempt in\n");
+    // printf("+++ +++ preempt in\n");
     // mark the process ready
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_READY;
@@ -155,7 +159,7 @@ extern void preempt(unsigned int cpu_id)
         while (curr -> next != NULL) {
             curr = curr -> next;
         }
-        printf("%s is aded after %s\n", current[cpu_id] -> name, curr -> name);
+        // printf("%s is aded after %s\n", current[cpu_id] -> name, curr -> name);
         curr -> next = current[cpu_id];
     }
     pthread_cond_signal(&ready_added);
@@ -165,7 +169,6 @@ extern void preempt(unsigned int cpu_id)
 
     // call schedule()
     schedule(cpu_id);
-    printf("+++ +++ preempt out\n");
 }
 
 
@@ -178,7 +181,7 @@ extern void preempt(unsigned int cpu_id)
  */
 extern void yield(unsigned int cpu_id)
 {
-    printf("+++ +++ yield in\n");
+    // printf("+++ +++ yield in\n");
     // mark the process as WAITING
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_WAITING;
@@ -186,8 +189,6 @@ extern void yield(unsigned int cpu_id)
 
     // call schedule()
     schedule(cpu_id);
-    printf("+++ +++ yield out\n");
-
 }
 
 
@@ -198,7 +199,7 @@ extern void yield(unsigned int cpu_id)
  */
 extern void terminate(unsigned int cpu_id)
 {
-    printf("+++ +++ terminate in\n");
+    // printf("+++ +++ terminate in\n");
     // mark the process as terminated
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_TERMINATED;
@@ -206,7 +207,6 @@ extern void terminate(unsigned int cpu_id)
 
     // call schedule()
     schedule(cpu_id);
-    printf("+++ +++ terminate out\n");
 }
 
 
@@ -227,21 +227,21 @@ extern void terminate(unsigned int cpu_id)
  */
 extern void wake_up(pcb_t *process)
 {
-    printf("+++ +++ wake_up in with process %s\n", process -> name);
-    printf("+++ process carried with it a next of %ld\n", (long)(process -> next));
+    // printf("+++ +++ wake_up in with process %s\n", process -> name);
+    // printf("+++ process carried with it a next of %ld\n", (long)(process -> next));
 
     if (algo == 3) {
-        printf("+++ not possible\n");
+        // printf("+++ not possible\n");
     } else {
         process -> state = PROCESS_READY;
         
         pthread_mutex_lock(&ready_mutex);
 
         if (ready == NULL) {
-            printf("+++ ready queue is empty\n");
+            // printf("+++ ready queue is empty\n");
             ready = process;
         } else {
-            printf("+++ ready queue is not empty\n");
+            // printf("+++ ready queue is not empty\n");
 
             pcb_t *curr = ready;
         
@@ -254,9 +254,6 @@ extern void wake_up(pcb_t *process)
         pthread_mutex_unlock(&ready_mutex);
         
     }
-    printf("+++ +++ wake_up out\n");
-
-
 }
 
 
@@ -272,7 +269,7 @@ int main(int argc, char *argv[])
      * Check here if the number of arguments provided is valid.
      * You will need to modify this when you add more arguments.
      */
-    if (argc != 2)
+    if ((argc < 2) || (argc > 5))
     {
         fprintf(stderr, "CS 2200 Project 4 -- Multithreaded OS Simulator\n"
             "Usage: ./os-sim <# CPUs> [ -r <time slice> | -s ]\n"
@@ -287,7 +284,15 @@ int main(int argc, char *argv[])
 
 
     // set the scheduling algorithm
-    /* FIX ME - Add support for -r and -s parameters*/
+
+    if (argc < 3) {                             // FIFO
+        algo = 1;
+    } else if (strcmp(argv[2], "-r") == 0) {    // Round Robin
+        algo = 2;
+        rr_time_slice = atoi(argv[3]);
+    } else {                                    // SRTF
+        algo = 3;
+    }
 
     // initialize mutexs and conds
     
