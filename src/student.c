@@ -37,6 +37,18 @@ static pcb_t **current;
 static pthread_mutex_t current_mutex;
 
 
+
+// static variables I added
+
+static int algo;            // 1 = FIFO, 2 = RR, 3 = SRTF
+static int rr_time_slice;
+
+static pcb_t **ready;
+static pthread_mutex_t ready_mutex;
+pthread_cond_t ready_added;
+
+
+
 /*
  * schedule() is your CPU scheduler.  It should perform the following tasks:
  *
@@ -58,7 +70,25 @@ static pthread_mutex_t current_mutex;
  */
 static void schedule(unsigned int cpu_id)
 {
-    /* FIX ME */
+
+    // Select and remove a runnable process, and set the process state to RUNNING
+    pcb_t *candidate = NULL;
+
+    pthread_mutex_lock(&ready_mutex);
+    if (ready != NULL) {
+        candidate = *ready;
+        candidate -> state = PROCESS_RUNNING;
+        ready = &(*ready) -> next;
+    }
+    pthread_mutex_unlock(&ready_mutex);
+
+    // Set the currently running process
+    pthread_mutex_lock(&current_mutex);
+    current[cpu_id] = candidate;
+    pthread_mutex_unlock(&current_mutex);
+
+    // Call context_switch()
+    context_switch(cpu_id, candidate, -1);    // !!! time will depend on mode
 }
 
 
@@ -71,9 +101,7 @@ static void schedule(unsigned int cpu_id)
  */
 extern void idle(unsigned int cpu_id)
 {
-    /* FIX ME */
-    schedule(0);
-
+    printf("idle in\n\n\n");
     /*
      * REMOVE THE LINE BELOW AFTER IMPLEMENTING IDLE()
      *
@@ -83,7 +111,33 @@ extern void idle(unsigned int cpu_id)
      * you implement a proper idle() function using a condition variable,
      * remove the call to mt_safe_usleep() below.
      */
-    mt_safe_usleep(1000000);
+
+    pthread_mutex_lock(&ready_mutex);
+    pthread_cond_wait(&ready_added, &ready_mutex);
+    pthread_mutex_unlock(&ready_mutex);
+    schedule(cpu_id);
+
+    printf("idle out\n\n\n");
+
+
+    /*
+    From Piazza
+
+    When the prompts mention condition variable, 
+    they are actually referring to the pthread_cond_t type in the pthreads library. 
+    This is a special data type that is largely black boxed for our purposes. 
+    In idle(), you should use the function pthread_cond_wait() to wait on the condition variable. 
+    I don't want to give too much away, but there's a particular condition under which the thread should be waiting. 
+    Think about under what conditions the processor is idle. 
+    Also keep in mind that you will need to initialize the condition variable in main 
+    (very similar to what's provided for initializing current_mutex) 
+    and that you will need to use the mutex lock for your ready queue in idle(). 
+    I hope that helps!
+
+    You'll want to initialize the condition variable down in main. 
+    The initialization for current_mutex (which is also in main) 
+    should give you a good hint about what your cond variable initialization should look like.
+    */
 }
 
 
@@ -98,7 +152,29 @@ extern void idle(unsigned int cpu_id)
  */
 extern void preempt(unsigned int cpu_id)
 {
-    /* FIX ME */
+    // mark the process ready
+    pthread_mutex_lock(&current_mutex);
+    current[cpu_id] -> state = PROCESS_READY;
+
+    // place the currently running process back in the ready queue
+    pthread_mutex_lock(&ready_mutex);
+
+    if (ready == NULL) {
+        ready = &current[cpu_id];
+        pthread_cond_signal(&ready_added);
+    }
+
+    pcb_t *curr = *ready;
+    while (curr -> next != NULL) {
+        curr = curr -> next;
+    }
+    curr -> next = current[cpu_id];
+
+    pthread_mutex_unlock(&ready_mutex);
+    pthread_mutex_unlock(&current_mutex);
+
+    // call schedule()
+    schedule(cpu_id);
 }
 
 
@@ -111,7 +187,13 @@ extern void preempt(unsigned int cpu_id)
  */
 extern void yield(unsigned int cpu_id)
 {
-    /* FIX ME */
+    // mark the process as WAITING
+    pthread_mutex_lock(&current_mutex);
+    current[cpu_id] -> state = PROCESS_WAITING;
+    pthread_mutex_unlock(&current_mutex);
+
+    // call schedule()
+    schedule(cpu_id);
 }
 
 
@@ -122,7 +204,13 @@ extern void yield(unsigned int cpu_id)
  */
 extern void terminate(unsigned int cpu_id)
 {
-    /* FIX ME */
+    // mark the process as terminated
+    pthread_mutex_lock(&current_mutex);
+    current[cpu_id] -> state = PROCESS_TERMINATED;
+    pthread_mutex_unlock(&current_mutex);
+
+    // call schedule()
+    schedule(cpu_id);
 }
 
 
@@ -143,7 +231,27 @@ extern void terminate(unsigned int cpu_id)
  */
 extern void wake_up(pcb_t *process)
 {
-    /* FIX ME */
+    if (algo == 3) {
+
+    } else {
+        process -> state = PROCESS_READY;
+        
+        pthread_mutex_lock(&ready_mutex);
+
+        if (ready == NULL) {
+            *ready = process;
+        }
+
+        pcb_t *curr = *ready;
+        while (curr -> next != NULL) {
+            curr = curr -> next;
+        }
+        curr -> next = process;
+
+        pthread_mutex_unlock(&ready_mutex);
+
+    }
+
 }
 
 
@@ -172,7 +280,13 @@ int main(int argc, char *argv[])
     /* Parse the command line arguments */
     cpu_count = strtoul(argv[1], NULL, 0);
 
+
+    // set the scheduling algorithm
     /* FIX ME - Add support for -r and -s parameters*/
+
+    // initialize mutexs and conds
+    pthread_mutex_init(&ready_mutex, NULL);
+    pthread_cond_init(&ready_added, NULL);
 
     /* Allocate the current[] array and its mutex */
     current = malloc(sizeof(pcb_t*) * cpu_count);
