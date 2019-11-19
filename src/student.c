@@ -41,9 +41,9 @@ static pthread_mutex_t current_mutex;
 // static variables I added
 
 static int algo;            // 1 = FIFO, 2 = RR, 3 = SRTF
-static int rr_time_slice;
+// static int rr_time_slice;
 
-static pcb_t **ready;
+static pcb_t *ready;
 static pthread_mutex_t ready_mutex;
 pthread_cond_t ready_added;
 
@@ -70,15 +70,18 @@ pthread_cond_t ready_added;
  */
 static void schedule(unsigned int cpu_id)
 {
-
+    printf("+++ +++ schedule in\n");
     // Select and remove a runnable process, and set the process state to RUNNING
     pcb_t *candidate = NULL;
 
     pthread_mutex_lock(&ready_mutex);
     if (ready != NULL) {
-        candidate = *ready;
+        candidate = ready;
         candidate -> state = PROCESS_RUNNING;
-        ready = &(*ready) -> next;
+        ready = ready -> next;
+        printf("+++ %s is scheduled to run on CPU %d\n", candidate -> name, cpu_id);
+        printf("+++ head moved to %ld\n", (long) ready);
+        candidate -> next = NULL;
     }
     pthread_mutex_unlock(&ready_mutex);
 
@@ -89,6 +92,7 @@ static void schedule(unsigned int cpu_id)
 
     // Call context_switch()
     context_switch(cpu_id, candidate, -1);    // !!! time will depend on mode
+    printf("+++ +++ schedule out\n");
 }
 
 
@@ -101,7 +105,7 @@ static void schedule(unsigned int cpu_id)
  */
 extern void idle(unsigned int cpu_id)
 {
-    printf("idle in\n\n\n");
+
     /*
      * REMOVE THE LINE BELOW AFTER IMPLEMENTING IDLE()
      *
@@ -111,33 +115,17 @@ extern void idle(unsigned int cpu_id)
      * you implement a proper idle() function using a condition variable,
      * remove the call to mt_safe_usleep() below.
      */
+    printf("+++ +++ idle in\n");
 
     pthread_mutex_lock(&ready_mutex);
-    pthread_cond_wait(&ready_added, &ready_mutex);
+    if (ready == NULL) {
+        printf("+++ idle waiting for ready_added signal\n");
+        pthread_cond_wait(&ready_added, &ready_mutex);
+        printf("+++ idle got ready_added signal\n");
+    }
     pthread_mutex_unlock(&ready_mutex);
     schedule(cpu_id);
-
-    printf("idle out\n\n\n");
-
-
-    /*
-    From Piazza
-
-    When the prompts mention condition variable, 
-    they are actually referring to the pthread_cond_t type in the pthreads library. 
-    This is a special data type that is largely black boxed for our purposes. 
-    In idle(), you should use the function pthread_cond_wait() to wait on the condition variable. 
-    I don't want to give too much away, but there's a particular condition under which the thread should be waiting. 
-    Think about under what conditions the processor is idle. 
-    Also keep in mind that you will need to initialize the condition variable in main 
-    (very similar to what's provided for initializing current_mutex) 
-    and that you will need to use the mutex lock for your ready queue in idle(). 
-    I hope that helps!
-
-    You'll want to initialize the condition variable down in main. 
-    The initialization for current_mutex (which is also in main) 
-    should give you a good hint about what your cond variable initialization should look like.
-    */
+    printf("+++ +++ idle out\n");
 }
 
 
@@ -152,6 +140,7 @@ extern void idle(unsigned int cpu_id)
  */
 extern void preempt(unsigned int cpu_id)
 {
+    printf("+++ +++ preempt in\n");
     // mark the process ready
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_READY;
@@ -160,21 +149,23 @@ extern void preempt(unsigned int cpu_id)
     pthread_mutex_lock(&ready_mutex);
 
     if (ready == NULL) {
-        ready = &current[cpu_id];
-        pthread_cond_signal(&ready_added);
+        ready = current[cpu_id];
+    } else {
+        pcb_t *curr = ready;
+        while (curr -> next != NULL) {
+            curr = curr -> next;
+        }
+        printf("%s is aded after %s\n", current[cpu_id] -> name, curr -> name);
+        curr -> next = current[cpu_id];
     }
-
-    pcb_t *curr = *ready;
-    while (curr -> next != NULL) {
-        curr = curr -> next;
-    }
-    curr -> next = current[cpu_id];
+    pthread_cond_signal(&ready_added);
 
     pthread_mutex_unlock(&ready_mutex);
     pthread_mutex_unlock(&current_mutex);
 
     // call schedule()
     schedule(cpu_id);
+    printf("+++ +++ preempt out\n");
 }
 
 
@@ -187,6 +178,7 @@ extern void preempt(unsigned int cpu_id)
  */
 extern void yield(unsigned int cpu_id)
 {
+    printf("+++ +++ yield in\n");
     // mark the process as WAITING
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_WAITING;
@@ -194,6 +186,8 @@ extern void yield(unsigned int cpu_id)
 
     // call schedule()
     schedule(cpu_id);
+    printf("+++ +++ yield out\n");
+
 }
 
 
@@ -204,6 +198,7 @@ extern void yield(unsigned int cpu_id)
  */
 extern void terminate(unsigned int cpu_id)
 {
+    printf("+++ +++ terminate in\n");
     // mark the process as terminated
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_TERMINATED;
@@ -211,6 +206,7 @@ extern void terminate(unsigned int cpu_id)
 
     // call schedule()
     schedule(cpu_id);
+    printf("+++ +++ terminate out\n");
 }
 
 
@@ -231,26 +227,35 @@ extern void terminate(unsigned int cpu_id)
  */
 extern void wake_up(pcb_t *process)
 {
-    if (algo == 3) {
+    printf("+++ +++ wake_up in with process %s\n", process -> name);
+    printf("+++ process carried with it a next of %ld\n", (long)(process -> next));
 
+    if (algo == 3) {
+        printf("+++ not possible\n");
     } else {
         process -> state = PROCESS_READY;
         
         pthread_mutex_lock(&ready_mutex);
 
         if (ready == NULL) {
-            *ready = process;
-        }
+            printf("+++ ready queue is empty\n");
+            ready = process;
+        } else {
+            printf("+++ ready queue is not empty\n");
 
-        pcb_t *curr = *ready;
-        while (curr -> next != NULL) {
-            curr = curr -> next;
+            pcb_t *curr = ready;
+        
+            while (curr -> next != NULL) {
+                curr = curr -> next;
+            }
+            curr -> next = process;
         }
-        curr -> next = process;
-
+        pthread_cond_signal(&ready_added);
         pthread_mutex_unlock(&ready_mutex);
-
+        
     }
+    printf("+++ +++ wake_up out\n");
+
 
 }
 
@@ -285,6 +290,7 @@ int main(int argc, char *argv[])
     /* FIX ME - Add support for -r and -s parameters*/
 
     // initialize mutexs and conds
+    
     pthread_mutex_init(&ready_mutex, NULL);
     pthread_cond_init(&ready_added, NULL);
 
