@@ -49,6 +49,8 @@ static pcb_t *ready;
 static pthread_mutex_t ready_mutex;
 pthread_cond_t ready_added;
 
+static unsigned int srtf_cpu_count;
+
 
 
 /*
@@ -72,19 +74,84 @@ pthread_cond_t ready_added;
  */
 static void schedule(unsigned int cpu_id)
 {
-    // printf("+++ +++ schedule in\n");
+    // printf("+++ +++ in schedule\n");
     // Select and remove a runnable process, and set the process state to RUNNING
     pcb_t *candidate = NULL;
-
     pthread_mutex_lock(&ready_mutex);
+
+
     if (ready != NULL) {
-        candidate = ready;
+        if (algo == 3) {                                // STRF
+            
+            pcb_t *curr = ready;
+
+            unsigned int min_time = curr -> time_remaining;
+            int min_time_index = 0;
+            pcb_t *min_time_pcb = curr;
+            int index_counter = 0;
+
+            while (curr != NULL) {
+                // printf("+++ SCHEDULER looks at process %s at index %d with remaining time %u\n", curr -> name, index_counter, curr -> time_remaining);
+                if (curr -> time_remaining < min_time) {
+                    min_time = curr -> time_remaining;
+                    min_time_index = index_counter;
+                    min_time_pcb = curr;
+                }
+                curr = curr -> next;
+                index_counter++;
+            }
+
+            // print ready queue
+            if (ready == NULL) {
+                // printf("\n?????? [Previous READY QUEUE: NULL] ??????\n\n");
+            } else {
+                // printf("\n??????[Previous READY QUEUE: ");
+                pcb_t *temp = ready;
+                while (temp != NULL) {
+                    // printf(" %s =>", temp -> name);
+                    temp = temp -> next;
+                }
+                // printf(" NULL] ??????\n\n");
+            }
+
+            candidate = min_time_pcb;
+            // printf("+++ SCHEDULER chose %s at position %d\n", min_time_pcb -> name, min_time_index);
+
+            if (min_time_index == 0) {
+                ready = candidate -> next;
+            } else {
+                pcb_t *iterator = ready;
+                for (int i = 0; i < min_time_index - 1; i++) {
+                    iterator = iterator -> next;
+                }
+                iterator -> next = candidate -> next;
+                // printf("%s had next set to %ld\n", iterator -> name, (long) candidate -> next);
+
+            }
+
+            // print ready queue
+            if (ready == NULL) {
+                // printf("\n?????? [READY QUEUE: NULL] ??????\n\n");
+            } else {
+                // printf("\n??????[READY QUEUE: ");
+                pcb_t *temp = ready;
+                while (temp != NULL) {
+                    // printf(" %s =>", temp -> name);
+                    temp = temp -> next;
+                }
+                // printf(" NULL] ??????\n\n");
+            }
+            
+
+        } else {                                        // FIFO or RR
+            candidate = ready;
+            ready = ready -> next;
+        }
+
         candidate -> state = PROCESS_RUNNING;
-        ready = ready -> next;
-        // printf("+++ %s is scheduled to run on CPU %d\n", candidate -> name, cpu_id);
-        // printf("+++ head moved to %ld\n", (long) ready);
         candidate -> next = NULL;
     }
+    
     pthread_mutex_unlock(&ready_mutex);
 
     // Set the currently running process
@@ -120,13 +187,11 @@ extern void idle(unsigned int cpu_id)
      * you implement a proper idle() function using a condition variable,
      * remove the call to mt_safe_usleep() below.
      */
-    // printf("+++ +++ idle in\n");
+    // printf("+++ +++ in idle \n");
 
     pthread_mutex_lock(&ready_mutex);
     if (ready == NULL) {
-        // printf("+++ idle waiting for ready_added signal\n");
         pthread_cond_wait(&ready_added, &ready_mutex);
-        // printf("+++ idle got ready_added signal\n");
     }
     pthread_mutex_unlock(&ready_mutex);
     schedule(cpu_id);
@@ -144,7 +209,7 @@ extern void idle(unsigned int cpu_id)
  */
 extern void preempt(unsigned int cpu_id)
 {
-    // printf("+++ +++ preempt in\n");
+    // printf("+++ +++ in preempt\n");
     // mark the process ready
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_READY;
@@ -159,15 +224,13 @@ extern void preempt(unsigned int cpu_id)
         while (curr -> next != NULL) {
             curr = curr -> next;
         }
-        // printf("%s is aded after %s\n", current[cpu_id] -> name, curr -> name);
         curr -> next = current[cpu_id];
+        // printf("+++ preempted %s is placed after %s in ready queue\n", current[cpu_id] -> name, curr -> name);
     }
     pthread_cond_signal(&ready_added);
-
     pthread_mutex_unlock(&ready_mutex);
     pthread_mutex_unlock(&current_mutex);
 
-    // call schedule()
     schedule(cpu_id);
 }
 
@@ -181,13 +244,13 @@ extern void preempt(unsigned int cpu_id)
  */
 extern void yield(unsigned int cpu_id)
 {
-    // printf("+++ +++ yield in\n");
+    // printf("+++ +++ in yield\n");
+    // printf("+++ +++ %s yielded CPU %u for I/O\n", current[cpu_id] -> name, cpu_id);
     // mark the process as WAITING
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_WAITING;
     pthread_mutex_unlock(&current_mutex);
 
-    // call schedule()
     schedule(cpu_id);
 }
 
@@ -199,13 +262,12 @@ extern void yield(unsigned int cpu_id)
  */
 extern void terminate(unsigned int cpu_id)
 {
-    // printf("+++ +++ terminate in\n");
+    // printf("+++ +++ in terminate\n");
     // mark the process as terminated
     pthread_mutex_lock(&current_mutex);
     current[cpu_id] -> state = PROCESS_TERMINATED;
     pthread_mutex_unlock(&current_mutex);
 
-    // call schedule()
     schedule(cpu_id);
 }
 
@@ -227,33 +289,55 @@ extern void terminate(unsigned int cpu_id)
  */
 extern void wake_up(pcb_t *process)
 {
-    // printf("+++ +++ wake_up in with process %s\n", process -> name);
-    // printf("+++ process carried with it a next of %ld\n", (long)(process -> next));
+    // printf("+++ +++ in wake_up with process %s with remaining time %u\n", process -> name, process -> time_remaining);
+    
+    pthread_mutex_lock(&ready_mutex);
+
+    process -> state = PROCESS_READY;
+
+    if (ready == NULL) {
+        ready = process;
+    } else {
+        pcb_t *curr = ready;
+    
+        while (curr -> next != NULL) {
+            curr = curr -> next;
+        }
+        curr -> next = process;
+    }
+    
+    pthread_cond_signal(&ready_added);
+    pthread_mutex_unlock(&ready_mutex);
 
     if (algo == 3) {
-        // printf("+++ not possible\n");
-    } else {
-        process -> state = PROCESS_READY;
-        
-        pthread_mutex_lock(&ready_mutex);
+        // force preempt
+        int has_idle = 0;
+        unsigned int highest_time = process -> time_remaining;
+        unsigned int highest_cpu_id = 0;
 
-        if (ready == NULL) {
-            // printf("+++ ready queue is empty\n");
-            ready = process;
-        } else {
-            // printf("+++ ready queue is not empty\n");
-
-            pcb_t *curr = ready;
         
-            while (curr -> next != NULL) {
-                curr = curr -> next;
+        pthread_mutex_lock(&current_mutex);
+
+        for (unsigned int i = 0; i < srtf_cpu_count; i++) {
+            if (current[i] == NULL) {
+                // printf("+++ CPU %u found idle, don't force preempt\n", i);
+                has_idle = 1;
+                break;
+            } else if (current[i] -> time_remaining > highest_time) {
+                // printf("+++ CPU %u is has a larger remaining time of %u\n", i, current[i] -> time_remaining);
+                highest_time = current[i] -> time_remaining;
+                highest_cpu_id = i;
             }
-            curr -> next = process;
+
         }
-        pthread_cond_signal(&ready_added);
-        pthread_mutex_unlock(&ready_mutex);
-        
-    }
+
+        pthread_mutex_unlock(&current_mutex);
+
+        if (!((has_idle) || (highest_time == process -> time_remaining))) {
+            // printf("+++ force_preempt called in wake_up for CPU %u running %s\n", highest_cpu_id, (current[highest_cpu_id]) -> name);
+            force_preempt(highest_cpu_id);
+        }
+    }      
 }
 
 
@@ -290,8 +374,12 @@ int main(int argc, char *argv[])
     } else if (strcmp(argv[2], "-r") == 0) {    // Round Robin
         algo = 2;
         rr_time_slice = atoi(argv[3]);
-    } else {                                    // SRTF
+    } else if (strcmp(argv[2], "-s") == 0) {                                    // SRTF
         algo = 3;
+        srtf_cpu_count = cpu_count;
+    } else {
+        printf("Invalid Input Flags!\n");
+        return -1;
     }
 
     // initialize mutexs and conds
