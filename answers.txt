@@ -7,15 +7,71 @@ GT Username: jlyu31
 Problem 1B
 ----------
 
-/* Fix me */
+Total execution time:
+    Single-Core FIFO:   67.6
+    Dual-Core FIFO:     35.8
+    Quad-Core FIFO:     33.2
+
+Question: Is there a linear relationship between the number of CPUs and total execution time?
+No, from the table above there is not a linear relationship. 
+Dual-Core FIFO / Single-Core FIFO (0.52) is not equal to Quad-Core time / Dual-Core FIFO time (0.93).
+Going from 1 CPU to 2 CPUs, the execution time nearly Shortened to half (67.6 -> 35.8). 
+However, going from 2 CPUs to 4CPUs, there is no obvious change (35.8 -> 33.2)
+There are a few reasons:
+    1.  some data structures like current CPU array and ready processes queue are global to every CPU.
+        They have to be protected by locks. 
+        When a process wants to acquire a lock that has been acquired by some other lock, 
+        it has to wait until the lock is released.
+    2.  there is only one I/O line, so processes need to wait for the processes in front of them to complete.
 
 Problem 2B
 ----------
 
-/* Fix me */
+Total time spent in READY state:
+    Single-Core RR 800ms: 325.4
+    Single-Core RR 600ms: 314.5
+    Single-Core RR 400ms: 298.8
+    Single-Core RR 200ms: 285.2
+
+Question: Comparing the total waiting time for each time slice for Round Robin?
+As we can see from the table above, as the time slice decreases from 800ms to 600ms, 400ms and 200ms, 
+the waiting time also drops from 325.4 to 314.5, 298.8 and 285.2.
+
+Question: Why the shortest timeslice possible is usually not the best choice?
+In real OS, context switches have overheads, because data for the old process like registers contents and memory pointers need to be swapped
+and data for the new process need to be swapped in. If shortest timeslice possible is used, then the number of context switches
+is going to be huge and the overhead from context swtiches is going to be huge. The computer will spend most of itst time carrying out
+the context switching process, instead of doing real computations.
 
 Problem 3B
 ----------
 
-/* Fix me */
+    Single-Core FIFO:           389.9
+    Single-Core RR 800ms:       325.4
+    Single-Core RR 600ms:       314.5
+    Single-Core RR 400ms:       298.8
+    Single-Core RR 200ms:       285.2
+    Single-Core SRTF:           160.9       
 
+Question: Why is it SRTF impossible in real world?
+It is essentially impossible to carry out SRTF in real world because we don't know the true remaining time of a process.
+We can only estimate it from a record of old execution records.
+
+Question: Comparing the total waiting times across each algorithm?
+SRTF has the lowest waiting time of 160.9 across all the algorithms. It is becasue in SRTF we prioritize
+processes with short remaining time. Image in FIFO there is a long process in front of many short processes. By running the long process first,
+each short process will have a long waiting time because they only run after the long process. However, if we choose to run
+the short processes before the long one, short processes don't need to wait, and the long process also doesn't wait for long because
+the processes in front of it are short.
+
+
+
+
+
+
+
+Complete experiment results are attached below in a .csv format
+
+Single-Core FIFO,,,Dual-Core FIFO,,,Quad-Core FIFO,,,RR 800ms,,,RR 600ms,,,RR 400ms,,,RR 200ms,,,Single-Core SRTF,,,Dual-Core SRTF,,,Quad-Core SRTF,,
+Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx.Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY,Ctx. Switches,Total Exec Time,Time in READY
+99,67.6,389.9,113,35.8,83.1,184,33.2,0.3,136,67.6,325.4,161,67.6,314.5,203,67.6,298.8,362,67.5,285.2,139,68.4,160.9,154,36.1,23.4,183,33.5,0.2
